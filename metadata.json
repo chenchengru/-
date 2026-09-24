@@ -1,0 +1,6 @@
+{
+  "name": "东南亚电商评论洞察工作台 - SEA Review Insight Studio",
+  "description": "专为Shopee/Lazada跨境电商打造的评论深度分析与刷单识别工作台，支持泰越印菲马多语言清洗、五星差评挖掘与选品对标决策。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
