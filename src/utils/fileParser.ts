@@ -105,10 +105,12 @@ export function parseRawRowToStandard(
   // 4. 关键主题提取
   const { topics, keyPhrases } = extractTopicsAndKeywords(content, rating);
 
-  // 5. 中文释义翻译 (优先严格保证与买家原文配对，清洗第三方爬虫导出的模板假翻译)
+  // 5. 中文释义翻译 (目标语言统一为中文：无论输入是任何语言，需要翻译的均翻译为中文)
   const rawZh = raw.contentZh || raw.translation || raw.zh || '';
   const rawZhStr = String(rawZh).trim();
+  const hasChinese = /[\u4e00-\u9fa5]/.test(rawZhStr);
   const isSuspicious = !rawZhStr || 
+    !hasChinese ||
     rawZhStr.includes('【买家好评】') || 
     rawZhStr.includes('规格材质符合预期') || 
     (rating <= 3 && (rawZhStr.includes('好评') || rawZhStr.includes('满意') || rawZhStr.includes('赞许')));

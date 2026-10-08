@@ -1,1 +1,30 @@
 @import "tailwindcss";
+
+@layer base {
+  ::selection {
+    background-color: #1B58A1 !important;
+    color: #FFFFFF !important;
+    -webkit-text-fill-color: #FFFFFF !important;
+  }
+  ::-moz-selection {
+    background-color: #1B58A1 !important;
+    color: #FFFFFF !important;
+  }
+  *::selection {
+    background-color: #1B58A1 !important;
+    color: #FFFFFF !important;
+    -webkit-text-fill-color: #FFFFFF !important;
+  }
+  *::-moz-selection {
+    background-color: #1B58A1 !important;
+    color: #FFFFFF !important;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+    background-color: #D8E4F0;
+    color: #090911;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}

@@ -1,4 +1,5 @@
 import { HiddenNegativeCheck, ReviewSentiment } from '../types';
+import { isWordlessReview } from './reviewCleaner';
 
 /**
  * 东南亚电商评论真实情感与隐性差评识别引擎
@@ -17,9 +18,9 @@ interface ComplaintTrigger {
 const COMPLAINT_TRIGGERS: ComplaintTrigger[] = [
   // 1. 电动工具与五金专用故障（高优先级）
   {
-    regex: /bms|แบตเตอรี่.*(?:พัง|ชาร์จไม่เข้า|หมดไว|เสีย)|ไฟชาร์จไม่เข้า|กระตุ้นแบต|ชาร์จไม่เข้า/i,
+    regex: /bms|แบตเตอรี่.*(?:พัง|ชาร์จไม่เข้า|หมดไว|เสีย|ไม่ทน)|แบตไม่ทน|แบตเตอรี่.*ไม่ทน|แปปแปปก็หมด|ไฟชาร์จไม่เข้า|กระตุ้นแบต|ชาร์จไม่เข้า|baterai boros|battery drains fast|battery dying/i,
     category: '电池/BMS故障',
-    grievanceZh: '电池无法充电/续航极短/BMS保护板损坏',
+    grievanceZh: '电池无法充电/续航极短/单次作业极快耗尽/BMS损坏',
     impact: '电池与BMS保护板严重品控缺陷，需立即联系电芯工厂排查保护板虚焊与充放电检测'
   },
   {
@@ -33,6 +34,12 @@ const COMPLAINT_TRIGGERS: ComplaintTrigger[] = [
     category: '结构件脆弱',
     grievanceZh: '固定外罩塑料件脆裂易折断',
     impact: '外壳改用抗冲击工程ABS或尼龙注塑，消除注塑应力集中导致的脆裂'
+  },
+  {
+    regex: /คืนได้ไหม|ขอคืน|คืนของ|คืนสินค้า|ไม่ชอบ|ไม่แนะนำ|ผิดหวัง|อย่าซื้อ|retur|refund|kembalikan|minta refund|can i return|want to return|do not like/i,
+    category: '退货诉求',
+    grievanceZh: '买家明确申请退货退款/强烈表示不喜欢与后悔',
+    impact: '高危客诉信号，表面高星难掩极度不满，需客服第一时间介入拦截差评与纠纷'
   },
 
   // 2. 物流与包装运输损坏
@@ -89,20 +96,28 @@ const COMPLAINT_TRIGGERS: ComplaintTrigger[] = [
     impact: '出库打包需引入扫码称重复核，杜绝少配件与混发'
   },
 
-  // 7. 通用功能故障
+  // 7. 通用功能故障与易损坏
   {
-    regex: /ใช้งานไม่ได้|ใช้ไม่ได้|ตัดไม่ได้|พังเร็ว|tidak bisa|broken quickly|not working/i,
+    regex: /ใช้งานไม่ได้|ใช้ไม่ได้|ตัดไม่ได้|เครื่องดับ|ดับเอง|ดับ|ไม่ติด|เปิดไม่ติด|ร้อนเร็ว|พังเร็ว|พังง่าย|พังแล้ว|พังง่ายมาก|tidak bisa|rusak|broken quickly|broken easily|not working|stopped working|broken/i,
     category: '功能耐用',
-    grievanceZh: '使用不久即出现功能故障或无法工作',
-    impact: '供应链源头品控缺陷，需向工厂追责或强化出厂带电测试'
+    grievanceZh: '使用不久即损坏/频繁自动断电熄火停机/极易报废',
+    impact: '供应链核心硬件耐久性严重不足，需向组装厂追责并强化带负载出厂测试'
   },
 
-  // 8. 气味与做工瑕疵
+  // 8. 售后客服失联与保修无门
   {
-    regex: /มีกลิ่นเหม็น|งานหยาบ|มีเสี้ยน|bau menyengat|jahitan tidak rapi|bad smell/i,
-    category: '做工细节',
-    grievanceZh: '做工细节粗糙 / 边缘毛刺割手',
-    impact: '工件注塑去毛边与出厂品检需加强'
+    regex: /ไม่ตอบ|ไม่มีคนตอบ|Admin ไม่ตอบ|แอดมินไม่ตอบ|ร้านไม่ตอบ|เพจก็ไม่มีการตอบ|ทักถาม.*ไม่ตอบ|ติดต่อไม่ได้|toko tidak balas|seller no reply|no response/i,
+    category: '售后失联',
+    grievanceZh: '联系客服无人回复/仅有机器人自动应答/保修推诿',
+    impact: '买家报修遇阻极易演变为追加差评或向平台升级纠纷，需设立人工售后急诊通道'
+  },
+
+  // 9. 极端差劲体验与做工瑕疵
+  {
+    regex: /ไม่ดีเลย|ห่วยแตก|แย่มาก|ไม่ประทับใจ|คุณภาพแย่|คุณภาพก็พอใช้|พอใช้|งั้นๆ|เสียความรู้สึก|sangat buruk|very bad|terrible|มีกลิ่นเหม็น|งานหยาบ|มีเสี้ยน/i,
+    category: '体验差劲',
+    grievanceZh: '整体使用体验差/做工粗糙毛刺/品质平庸勉强/大失所望',
+    impact: '产品实际性能与主图预期落差巨大，需重构产品定位并提升基础做工'
   }
 ];
 
@@ -119,6 +134,41 @@ const TURN_PATTERNS = [
  * 隐性差评智能挖掘
  */
 export function detectHiddenNegative(content: string, rating: number): HiddenNegativeCheck {
+  // 1. 严格判断是否为纯打星无字评价（彻底杜绝无字评价被提取负反馈痛点的自相矛盾）
+  if (isWordlessReview(content)) {
+    if (rating >= 4) {
+      return {
+        isHiddenNegative: false,
+        severity: 'low',
+        realSentiment: 'positive',
+        surfaceRating: rating,
+        extractedGrievances: [], // 严格为空，绝不提取负反馈
+        primaryCategory: '纯打星无字好评',
+        businessImpact: '系统默认打星/无字好评，买家未留文字，无产品客诉隐患'
+      };
+    } else if (rating <= 2) {
+      return {
+        isHiddenNegative: false,
+        severity: 'medium',
+        realSentiment: 'negative',
+        surfaceRating: rating,
+        extractedGrievances: ['纯打星低星差评（买家未留具体文字）'],
+        primaryCategory: '纯打星差评',
+        businessImpact: '买家直接给低星且未留文字，建议客服主动发送关怀卡了解履约问题'
+      };
+    } else {
+      return {
+        isHiddenNegative: false,
+        severity: 'low',
+        realSentiment: 'neutral',
+        surfaceRating: rating,
+        extractedGrievances: [],
+        primaryCategory: '纯打星中立',
+        businessImpact: '3星中立打分，买家未留文字'
+      };
+    }
+  }
+
   const isHighRating = rating >= 4;
   const isNeutralRating = rating === 3;
 
@@ -213,6 +263,13 @@ export function detectHiddenNegative(content: string, rating: number): HiddenNeg
  * 提取核心主题与关键词根
  */
 export function extractTopicsAndKeywords(content: string, rating: number): { topics: string[]; keyPhrases: string[] } {
+  if (isWordlessReview(content)) {
+    return {
+      topics: [rating >= 4 ? '默认好评' : (rating <= 2 ? '低星打分' : '中立打分')],
+      keyPhrases: []
+    };
+  }
+
   const topics: string[] = [];
   const keyPhrases: string[] = [];
 

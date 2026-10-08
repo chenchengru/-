@@ -14,6 +14,7 @@ import { StandardReview, DatasetSummary } from './types';
 import { analyzeScenarios } from './utils/scenarioAnalyzer';
 import { translateToChinese } from './utils/translator';
 import { detectHiddenNegative, extractTopicsAndKeywords } from './utils/sentimentAndHiddenReview';
+import { identifyBatchFakeClusters } from './utils/reviewCleaner';
 import { 
   exportReviewsToExcel, 
   parseUploadedFile, 
@@ -31,9 +32,10 @@ import {
 
 // 数据重水合：对已有缓存评论做最新翻译、隐性差评算法与标签的同步升级
 const rehydrateReviews = (rawReviews: StandardReview[]): StandardReview[] => {
-  return rawReviews.map((r) => {
+  const processed = rawReviews.map((r) => {
     const isMismatched = 
       !r.contentZh || 
+      !/[\u4e00-\u9fa5]/.test(r.contentZh) ||
       r.contentZh.includes('【买家留言】') || 
       r.contentZh.includes('【买家好评】') ||
       r.contentZh.includes('规格材质符合预期') ||
@@ -53,15 +55,17 @@ const rehydrateReviews = (rawReviews: StandardReview[]): StandardReview[] => {
       keyPhrases: (keyPhrases && keyPhrases.length > 0) ? keyPhrases : r.keyPhrases
     };
   });
+
+  return identifyBatchFakeClusters(processed);
 };
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<MainTabType>('executive_dashboard');
   
-  // 工作台主题模式：支持黑底暗黑模式与白底明亮模式
+  // 工作台主题模式：默认使用现代 SaaS 极简明亮蓝系风格
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const saved = localStorage.getItem('sea_studio_theme');
-    return saved === 'light' ? 'light' : 'dark';
+    return saved === 'dark' ? 'dark' : 'light';
   });
 
   // 历史表格记录与当前活跃文件状态
@@ -232,8 +236,8 @@ export default function App() {
   return (
     <div className={`min-h-screen flex flex-col font-sans transition-colors duration-200 ${
       isLight 
-        ? 'bg-slate-50 text-slate-900 selection:bg-amber-200 selection:text-amber-900' 
-        : 'bg-neutral-950 text-neutral-100 selection:bg-amber-500/30 selection:text-amber-200'
+        ? 'bg-[#D8E4F0] text-[#090911] selection:bg-[#BCD7F5] selection:text-[#1B58A1]' 
+        : 'bg-[#090911] text-neutral-100 selection:bg-[#1B58A1]/40 selection:text-white'
     }`}>
       {/* 顶部导航 */}
       <Header
@@ -292,21 +296,21 @@ export default function App() {
 
       {/* 底部信息栏 */}
       <footer className={`border-t py-6 text-xs transition-colors ${
-        isLight ? 'border-slate-200 bg-white text-slate-500' : 'border-neutral-900 bg-neutral-950 text-neutral-500'
+        isLight ? 'border-[#91AECF]/30 bg-white text-[#5A6E85]' : 'border-neutral-900 bg-neutral-950 text-neutral-500'
       }`}>
         <div className="mx-auto max-w-7xl px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <span className={`font-semibold ${isLight ? 'text-slate-700' : 'text-neutral-400'}`}>
+            <span className={`font-semibold ${isLight ? 'text-[#090911]' : 'text-neutral-400'}`}>
               东南亚跨境电商评论全景看板
             </span>
             <span aria-hidden="true">·</span>
-            <span>Shopee / Lazada 原始评价导入 · 0.5秒本地清洗与决策证据生成</span>
+            <span>Shopee / Lazada 原始评价导入 · 一秒本地清洗与决策证据生成</span>
           </div>
 
           <div className="flex items-center gap-4 opacity-80">
             <span>支持国家：泰国(TH) · 越南(VN) · 印尼(ID) · 菲律宾(PH) · 马来(MY)</span>
             <span aria-hidden="true">·</span>
-            <span className={isLight ? 'text-slate-800 font-medium' : 'text-neutral-300 font-medium'}>
+            <span className={isLight ? 'text-[#1B58A1] font-medium' : 'text-neutral-300 font-medium'}>
               本地隐私离线沙箱 · 商业机密零外泄
             </span>
           </div>

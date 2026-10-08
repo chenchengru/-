@@ -439,8 +439,8 @@ export function extractExecutiveDashboardData(reviews: StandardReview[]): Execut
       percentage: Math.round((count / totalCount) * 100)
     }));
 
-  // 3. 变体分布
-  const variantColors = ['#f59e0b', '#3b82f6', '#10b981', '#ec4899', '#8b5cf6', '#64748b'];
+  // 3. 变体分布 (统一采用 #1B58A1 → #91AECF → #BCD7F5 的蓝色渐变系列)
+  const variantColors = ['#1B58A1', '#3A70AC', '#5E8DC0', '#91AECF', '#BCD7F5', '#A5C4E8'];
   const variants: VariantRatioItem[] = Object.entries(variantCounts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 6)
@@ -451,12 +451,62 @@ export function extractExecutiveDashboardData(reviews: StandardReview[]): Execut
       color: variantColors[idx % variantColors.length]
     }));
 
-  // 4. 星级真实分布
-  const starDistribution: StarDistributionItem[] = [5, 4, 3, 2, 1].map(star => ({
-    star,
-    count: starCounts[star] || 0,
-    percentage: Math.round(((starCounts[star] || 0) / totalCount) * 100)
-  }));
+  // 4. 星级真实分布 (采用最大余额法 Largest Remainder Method，保证各星级百分比严格相加等于 100%)
+  const stars = [5, 4, 3, 2, 1];
+  let starDistribution: StarDistributionItem[] = [];
+  if (totalCount === 0) {
+    starDistribution = stars.map(star => ({ star, count: 0, percentage: 0 }));
+  } else {
+    const rawStarData = stars.map(star => {
+      const count = starCounts[star] || 0;
+      const rawPct = (count / totalCount) * 100;
+      return {
+        star,
+        count,
+        rawPct,
+        floorPct: Math.floor(rawPct),
+        remainder: rawPct - Math.floor(rawPct)
+      };
+    });
+
+    const sumFloor = rawStarData.reduce((acc, curr) => acc + curr.floorPct, 0);
+    let diff = 100 - sumFloor;
+
+    // 按余数从大到小排序，仅分配给样本量 > 0 的星级
+    const sortedIndices = rawStarData
+      .map((d, index) => ({ index, remainder: d.count > 0 ? d.remainder : -1 }))
+      .sort((a, b) => b.remainder - a.remainder);
+
+    const bonusMap: Record<number, number> = {};
+    for (let i = 0; i < sortedIndices.length && diff > 0; i++) {
+      if (sortedIndices[i].remainder >= 0) {
+        bonusMap[sortedIndices[i].index] = 1;
+        diff--;
+      }
+    }
+
+    starDistribution = rawStarData.map((d, index) => ({
+      star: d.star,
+      count: d.count,
+      percentage: d.count === 0 ? 0 : d.floorPct + (bonusMap[index] || 0)
+    }));
+
+    // 最终严格兜底：校验 5 个星级百分比之和，确保严格等于 100%
+    const currentSum = starDistribution.reduce((acc, curr) => acc + curr.percentage, 0);
+    if (currentSum !== 100 && totalCount > 0) {
+      const delta = 100 - currentSum;
+      // 找出当前 count 最大的非零星级进行调平配平
+      let maxItem = starDistribution.find(d => d.count > 0);
+      for (const d of starDistribution) {
+        if (d.count > (maxItem ? maxItem.count : 0)) {
+          maxItem = d;
+        }
+      }
+      if (maxItem) {
+        maxItem.percentage = Math.max(0, maxItem.percentage + delta);
+      }
+    }
+  }
 
   // 5. 未被满足的需求与改进空间 (纯中文提炼)
   const unmetNeeds: UnmetNeedItem[] = [];

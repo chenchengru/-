@@ -60,6 +60,8 @@ export interface StandardReview {
   hiddenNegativeCheck: HiddenNegativeCheck;
   topics: string[]; // 涉及主题：质量、尺寸、物流、包装等
   keyPhrases: string[]; // 提炼关键词根
+  customSentimentLabel?: string; // 大模型分析输出的精准情感方向 (如: 五星隐性差评、严重差评、正向满意)
+  analyzedModel?: string; // 调用的分析模型名称 (如: gpt-5.4-mini)
   itemType?: 'our_product' | 'competitor_product'; // 本品或竞品
   rawRow?: Record<string, any>; // 保留原始行字段以便表格穿透查看
 }
