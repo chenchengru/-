@@ -3,7 +3,7 @@ import { StandardReview, SEAPlatform } from '../types';
 import { detectLanguage } from './languageDetector';
 import { evaluateReviewValidity } from './reviewCleaner';
 import { detectHiddenNegative, extractTopicsAndKeywords } from './sentimentAndHiddenReview';
-import { translateToChinese } from './translator';
+import { translateToChinese, containsForbiddenForeignChars } from './translator';
 
 /**
  * 东南亚电商评论数据解析与标准字段映射器
@@ -111,6 +111,7 @@ export function parseRawRowToStandard(
   const hasChinese = /[\u4e00-\u9fa5]/.test(rawZhStr);
   const isSuspicious = !rawZhStr || 
     !hasChinese ||
+    containsForbiddenForeignChars(rawZhStr) ||
     rawZhStr.includes('【买家好评】') || 
     rawZhStr.includes('规格材质符合预期') || 
     rawZhStr.includes('好 好') ||

@@ -7,12 +7,18 @@ import { SupportedLanguage } from '../types';
 
 export function detectLanguage(text: string): { lang: SupportedLanguage; label: string; confidence: number } {
   if (!text || text.trim().length === 0) {
-    return { lang: 'en', label: '未知/英文', confidence: 0 };
+    return { lang: 'en', label: '未知', confidence: 0 };
+  }
+
+  // 若仅包含纯数字、纯符号、表情包，识别为未知
+  const pureText = text.replace(/[\d\s\p{P}\p{S}]/gu, '');
+  if (pureText.length === 0) {
+    return { lang: 'en', label: '未知', confidence: 0 };
   }
 
   // 1. Check Thai (ก-ฮ Unicode range \u0E00-\u0E7F)
   const thaiMatches = text.match(/[\u0E00-\u0E7F]/g);
-  if (thaiMatches && thaiMatches.length >= 2) {
+  if (thaiMatches && thaiMatches.length >= 1) {
     const ratio = thaiMatches.length / text.length;
     return { 
       lang: 'th', 
@@ -34,24 +40,36 @@ export function detectLanguage(text: string): { lang: SupportedLanguage; label: 
 
   // 4. Check Indonesian / Malay characteristic vocabulary
   const lower = text.toLowerCase();
-  const indoTokens = ['bagus', 'pengiriman', 'kecewa', 'pesanan', 'barang', 'mantap', 'sesuai', 'rusak', 'suka', 'kurir', 'bahan', 'warna', 'ukuran', 'seller', 'cepat', 'lama', 'banget', 'bintang'];
+  const indoTokens = ['bagus', 'pengiriman', 'kecewa', 'pesanan', 'barang', 'mantap', 'sesuai', 'rusak', 'suka', 'kurir', 'bahan', 'warna', 'ukuran', 'seller', 'cepat', 'lama', 'banget', 'bintang', 'makasih'];
   const indoScore = indoTokens.filter(token => lower.includes(token)).length;
   if (indoScore >= 2) {
-    return { lang: 'id', label: '印尼语 (Bahasa Indonesia)', confidence: 85 };
+    return { lang: 'id', label: '印尼语 (Indonesian)', confidence: 85 };
+  }
+
+  const malayTokens = ['terbaik', 'penghantaran', 'bunkus', 'kemas', 'elok', 'puas hati', 'kualiti', 'tq seller', 'seller mantap', 'sampai cepat', 'berfungsi'];
+  const malayScore = malayTokens.filter(token => lower.includes(token)).length;
+  if (malayScore >= 1) {
+    return { lang: 'id', label: '马来语 (Malay)', confidence: 85 };
   }
 
   // 5. Check Tagalog (PH)
-  const tagalogTokens = ['ganda', 'salamat', 'dumating', 'maganda', 'kaso', 'pangit', 'sulit', 'mabilis', 'order', 'ang'];
+  const tagalogTokens = ['ganda', 'salamat', 'dumating', 'maganda', 'kaso', 'pangit', 'sulit', 'mabilis', 'order', 'ang', 'po', 'lahat', 'subok', 'nagustuhan'];
   const tagalogScore = tagalogTokens.filter(token => lower.includes(token)).length;
   if (tagalogScore >= 2) {
-    return { lang: 'ph', label: '菲律宾语 (Taglish)', confidence: 85 };
+    return { lang: 'ph', label: '菲律宾语 (Tagalog)', confidence: 85 };
   }
 
   if (indoScore === 1) {
-    return { lang: 'id', label: '印尼语/马来语', confidence: 60 };
+    return { lang: 'id', label: '印尼语 (Indonesian)', confidence: 70 };
   }
 
-  return { lang: 'en', label: '英语/通用', confidence: 80 };
+  // 6. Check English
+  const englishWords = lower.match(/\b[a-z]{2,}\b/g) || [];
+  if (englishWords.length >= 2) {
+    return { lang: 'en', label: '英语 (English)', confidence: 85 };
+  }
+
+  return { lang: 'en', label: '未知', confidence: 0 };
 }
 
 /**

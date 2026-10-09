@@ -10,7 +10,13 @@ import {
 import { StandardReview, DatasetSummary } from '../types';
 import { extractExecutiveDashboardData, matchReviewWithTag } from '../utils/dashboardExtractor';
 import { DatasetRecord } from '../utils/datasetStorage';
-import { translateWithGoogleApi, translateToChinese, cacheAiTranslationResult } from '../utils/translator';
+import { 
+  translateWithGoogleApi, 
+  translateToChinese, 
+  cacheAiTranslationResult,
+  containsForbiddenForeignChars,
+  purifyToPureChinese
+} from '../utils/translator';
 import { analyzeReviewWithBackend } from '../utils/reviewAnalyzer';
 import { SEA_SLANG_DICTIONARY } from '../utils/languageDetector';
 import { parseRawRowToStandard, autoDetectFieldMapping } from '../utils/fileParser';
@@ -115,8 +121,12 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
         language: review.language
       });
       if (res && res.success) {
-        if (res.translation) {
-          cacheAiTranslationResult(review.content, res.translation);
+        let cleanTrans = (res.translation || '').trim();
+        if (containsForbiddenForeignChars(cleanTrans)) {
+          cleanTrans = purifyToPureChinese(cleanTrans, review.content, review.rating);
+        }
+        if (cleanTrans) {
+          cacheAiTranslationResult(review.content, cleanTrans);
         }
         setReviews(prev => prev.map(r => {
           if (r.id !== review.id) return r;
@@ -132,7 +142,8 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
 
           return {
             ...r,
-            contentZh: res.translation || r.contentZh,
+            contentZh: cleanTrans || r.contentZh,
+            languageLabel: (r.languageLabel === '未知/英文' || !r.languageLabel) ? '未知' : r.languageLabel,
             topics: newTopics,
             customSentimentLabel: res.sentiment,
             analyzedModel: res.model || 'gpt-5.4-mini',
@@ -184,7 +195,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
       for (const r of candidates) {
         try {
           const fullTrans = await translateWithGoogleApi(r.content, r.language || 'auto');
-          if (fullTrans && fullTrans !== r.contentZh) {
+          if (fullTrans && fullTrans !== r.contentZh && !containsForbiddenForeignChars(fullTrans)) {
             updatedMap[r.id] = fullTrans;
             changed = true;
           }
@@ -2412,7 +2423,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
                           <div className="flex items-center gap-2 text-[10px] opacity-60 pt-0.5">
                             <span>买家: {review.buyerName}</span>
                             <span aria-hidden="true">·</span>
-                            <span>{review.languageLabel}</span>
+                            <span>{review.languageLabel === '未知/英文' ? '未知' : (review.languageLabel || '未知')}</span>
                             
                             <button
                               onClick={() => toggleExpand(review.id)}
@@ -2626,7 +2637,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
             <div className="space-y-1.5">
               <div className="flex items-center justify-between text-xs font-semibold opacity-80">
                 <span>买家原始留评内容 (原文)</span>
-                <span className="text-[10px] font-mono opacity-60">语言: {activeDrilldownReview.languageLabel}</span>
+                <span className="text-[10px] font-mono opacity-60">语言: {activeDrilldownReview.languageLabel === '未知/英文' ? '未知' : (activeDrilldownReview.languageLabel || '未知')}</span>
               </div>
               <div className={`p-3 rounded-lg border text-xs leading-relaxed ${
                 isLight ? 'bg-[#F8FAFC] border-[#91AECF]/30 text-[#090911]' : 'bg-neutral-950 border-neutral-800'
