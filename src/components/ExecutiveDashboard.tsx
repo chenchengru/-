@@ -10,7 +10,7 @@ import {
 import { StandardReview, DatasetSummary } from '../types';
 import { extractExecutiveDashboardData, matchReviewWithTag } from '../utils/dashboardExtractor';
 import { DatasetRecord } from '../utils/datasetStorage';
-import { translateWithGoogleApi, translateToChinese } from '../utils/translator';
+import { translateWithGoogleApi, translateToChinese, cacheAiTranslationResult } from '../utils/translator';
 import { analyzeReviewWithBackend } from '../utils/reviewAnalyzer';
 import { SEA_SLANG_DICTIONARY } from '../utils/languageDetector';
 import { parseRawRowToStandard, autoDetectFieldMapping } from '../utils/fileParser';
@@ -115,6 +115,9 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
         language: review.language
       });
       if (res && res.success) {
+        if (res.translation) {
+          cacheAiTranslationResult(review.content, res.translation);
+        }
         setReviews(prev => prev.map(r => {
           if (r.id !== review.id) return r;
           const isHidden = res.sentiment.includes('隐性差评') || (r.rating >= 4 && (res.sentiment.includes('差评') || res.sentiment.includes('不满')));
@@ -2336,9 +2339,15 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
                   const isExpanded = Boolean(expandedReviewIds[review.id]);
                   const isHiddenNeg = review.hiddenNegativeCheck.isHiddenNegative;
                   const sentiment = isHiddenNeg ? '五星隐性差评' : (review.hiddenNegativeCheck.realSentiment === 'positive' ? '正向' : (review.hiddenNegativeCheck.realSentiment === 'negative' ? '负向' : '中立'));
-                  const contentChinese = (review.contentZh && /[\u4e00-\u9fa5]/.test(review.contentZh))
+                  const isSuspiciousZh = !review.contentZh || 
+                    !/[\u4e00-\u9fa5]/.test(review.contentZh) ||
+                    review.contentZh.trim().length <= 4 ||
+                    review.contentZh.includes('好 好') ||
+                    review.contentZh.startsWith(',,, 但是');
+
+                  const contentChinese = (!isSuspiciousZh && /[\u4e00-\u9fa5]/.test(review.contentZh))
                     ? review.contentZh
-                    : translateToChinese(review.content);
+                    : translateToChinese(review.content, review.language);
 
                   return (
                     <tr 

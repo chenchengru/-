@@ -113,6 +113,8 @@ export function parseRawRowToStandard(
     !hasChinese ||
     rawZhStr.includes('【买家好评】') || 
     rawZhStr.includes('规格材质符合预期') || 
+    rawZhStr.includes('好 好') ||
+    rawZhStr.startsWith(',,, 但是') ||
     (rating <= 3 && (rawZhStr.includes('好评') || rawZhStr.includes('满意') || rawZhStr.includes('赞许')));
 
   const contentZh = !isSuspicious ? rawZhStr : translateToChinese(content, langResult.lang);

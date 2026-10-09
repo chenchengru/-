@@ -50,10 +50,10 @@ const COMPLAINT_TRIGGERS: ComplaintTrigger[] = [
     impact: '长途海运与本土快递暴力分拣致损，需升级气泡柱或双瓦楞外箱加固包装'
   },
   {
-    regex: /ส่งช้ามาก|รอนานมาก|ส่งช้าเกินไป|kirimnya lama|pengiriman lambat|took forever|very slow delivery/i,
-    category: '物流时效',
-    grievanceZh: '尾程或海运配送时间过长，买家等待焦躁',
-    impact: '需在Listing首页明确跨境预计收货时效，避免心理预期落差'
+    regex: /ส่งช้ามาก|รอนานมาก|ส่งช้าเกินไป|ส่งเลว|ส่งแย่|ขนส่งแย่|ขนส่งไม่ดี|ส่งของแย่|kirimnya lama|pengiriman lambat|pengiriman buruk|pengiriman jelek|took forever|very slow delivery|bad delivery|poor delivery|giao hàng tệ|giao hàng kém|pangit ang delivery/i,
+    category: '物流时效/配送服务差',
+    grievanceZh: '尾程配送时间过长或配送服务极差，买家强烈不满',
+    impact: '需在Listing首页明确跨境预计收货时效并优化本地末端物流商，避免物流差评侵蚀复购率'
   },
 
   // 3. 尺寸与规格落差（区分工具五金 vs 服饰）

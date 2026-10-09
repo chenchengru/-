@@ -195,7 +195,7 @@ async function resolveWorkingRelayModel(baseUrl, apiKey, requestedModel) {
   return cachedWorkingModel;
 }
 
-// 核心大模型调用逻辑 (支持中转站 OpenAI 兼容协议 & 自动模型探测)
+// 核心大模型调用逻辑 (优先读取 GEMINI_API_KEY，次选中转站，最后兜底本地 NLP)
 async function callLlmForReviewAnalysis(content, rating, sku, language) {
   const userContent = `
 买家表面评分: ${rating || 5} ★
@@ -207,7 +207,46 @@ ${content}
 """
 `.trim();
 
-  // 1. 首选：支持第三方中转站大模型 API
+  // 1. 首选：Google Gemini 原生 API (GEMINI_API_KEY - gemini-3.8-flash)
+  const geminiApiKey = (process.env.GEMINI_API_KEY || process.env.geminiapikey || '').trim();
+  if (geminiApiKey) {
+    try {
+      const { GoogleGenAI } = await import('@google/genai');
+      const ai = new GoogleGenAI({
+        apiKey: geminiApiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+      });
+      const resp = await ai.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: `${SEA_REVIEW_SYSTEM_PROMPT}\n\n${userContent}` }]
+          }
+        ],
+        config: {
+          responseMimeType: 'application/json'
+        }
+      });
+
+      const text = resp.text;
+      const parsed = extractJsonFromText(text);
+      if (parsed && parsed.translation && parsed.sentiment) {
+        return {
+          success: true,
+          provider: 'gemini',
+          model: 'gemini-3.8-flash',
+          translation: parsed.translation,
+          sentiment: parsed.sentiment,
+          tags: Array.isArray(parsed.tags) ? parsed.tags.slice(0, 3) : ['深度痛点提炼']
+        };
+      }
+    } catch (geminiErr) {
+      console.warn('[Backend] Gemini API call failed, trying backup relay:', geminiErr.message);
+    }
+  }
+
+  // 2. 次选：支持第三方中转站大模型 API (OPENAI_API_KEY)
   const relayBaseUrl = (
     process.env.OPENAI_BASE_URL ||
     process.env.API_BASE_URL ||
@@ -273,7 +312,6 @@ ${content}
           const errStatus = response.status;
           const errBody = await response.text();
           console.warn(`[Relay API] Model ${modelCandidate} failed (${errStatus}):`, errBody.slice(0, 150));
-          // 如果是模型不存在 (503/404/model_not_found)，继续尝试下一个模型
           if (errStatus === 503 || errStatus === 404 || errBody.includes('model_not_found')) {
             continue;
           }
@@ -281,42 +319,6 @@ ${content}
       } catch (err) {
         console.warn(`[Relay API] Call ${modelCandidate} error:`, err.message);
       }
-    }
-  }
-
-  // 2. 次选：Google Gemini 原生 API (GEMINI_API_KEY)
-  const geminiApiKey = process.env.GEMINI_API_KEY || process.env.geminiapikey;
-  if (geminiApiKey) {
-    try {
-      const { GoogleGenAI } = await import('@google/genai');
-      const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-      const resp = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: `${SEA_REVIEW_SYSTEM_PROMPT}\n\n${userContent}` }]
-          }
-        ],
-        config: {
-          responseMimeType: 'application/json'
-        }
-      });
-
-      const text = resp.text;
-      const parsed = extractJsonFromText(text);
-      if (parsed && parsed.translation && parsed.sentiment) {
-        return {
-          success: true,
-          provider: 'gemini',
-          model: 'gemini-2.5-flash',
-          translation: parsed.translation,
-          sentiment: parsed.sentiment,
-          tags: Array.isArray(parsed.tags) ? parsed.tags.slice(0, 3) : ['深度痛点提炼']
-        };
-      }
-    } catch (geminiErr) {
-      console.warn('Gemini API call failed, falling back:', geminiErr.message);
     }
   }
 
@@ -403,7 +405,21 @@ export function registerApiRoutes(app) {
     }
   });
 
-  console.log('✅ Express backend API routes (/api/analyze, /api/health, /api/models) successfully mounted');
+  // 纯文本翻译接口
+  app.post('/api/translate', async (req, res) => {
+    try {
+      const { text } = req.body || {};
+      if (!text || typeof text !== 'string') {
+        return res.status(400).json({ success: false, error: 'text 不能为空' });
+      }
+      const fb = fallbackAnalyze(text, 5, 'auto');
+      return res.json({ success: true, translation: fb.translation });
+    } catch (e) {
+      return res.json({ success: true, translation: req.body?.text || '' });
+    }
+  });
+
+  console.log('✅ Express backend API routes (/api/analyze, /api/translate, /api/health, /api/models) successfully mounted');
 }
 
 // 独立启动支持 (当直接执行 node server/index.js 时)
