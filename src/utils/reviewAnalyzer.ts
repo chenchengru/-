@@ -11,6 +11,8 @@ export interface ReviewAnalysisResult {
   translation: string;
   sentiment: string; // "正向满意" | "五星隐性差评" | "四星隐性差评" | "严重差评" | "负向不满" | "中立观望"
   tags: string[];
+  isFallback?: boolean;
+  error?: string;
 }
 
 /**
@@ -45,10 +47,11 @@ export async function analyzeReviewWithBackend(params: {
         return {
           success: true,
           provider: data.provider || 'backend_llm',
-          model: data.model || 'gpt-5.4-mini',
+          model: data.model || 'gemini-3.7-flash',
           translation: data.translation || '',
           sentiment: data.sentiment || '中立观望',
-          tags: Array.isArray(data.tags) ? data.tags : []
+          tags: Array.isArray(data.tags) ? data.tags : [],
+          isFallback: Boolean(data.isFallback || data.provider === 'local_nlp_fallback')
         };
       }
     }
@@ -56,9 +59,11 @@ export async function analyzeReviewWithBackend(params: {
     console.error('[analyzeReviewWithBackend] Network request failed:', error);
   }
 
-  // 若网络中断或异常，保留结构并返回标记
+  // 若网络中断或异常，明确标记 isFallback 与 failure
   return {
     success: false,
+    isFallback: true,
+    error: 'network_failed',
     model: 'offline',
     translation: '',
     sentiment: rating >= 4 ? '正向满意' : (rating <= 2 ? '严重差评' : '中立观望'),

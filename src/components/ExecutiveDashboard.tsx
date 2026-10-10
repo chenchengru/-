@@ -13,6 +13,7 @@ import { DatasetRecord } from '../utils/datasetStorage';
 import { 
   translateWithGoogleApi, 
   translateToChinese, 
+  batchTranslateWithAi,
   cacheAiTranslationResult,
   containsForbiddenForeignChars,
   purifyToPureChinese
@@ -120,7 +121,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
         sku: review.sku,
         language: review.language
       });
-      if (res && res.success) {
+      if (res && res.success && !res.isFallback) {
         let cleanTrans = (res.translation || '').trim();
         if (containsForbiddenForeignChars(cleanTrans)) {
           cleanTrans = purifyToPureChinese(cleanTrans, review.content, review.rating);
@@ -135,18 +136,24 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
           const isNeg = res.sentiment.includes('差评') || res.sentiment.includes('不满');
           const realSentiment = isPos ? 'positive' : (isNeg ? 'negative' : 'neutral');
 
-          const newTopics = res.tags && res.tags.length > 0 ? res.tags : r.topics;
-          const newGrievances = (isHidden || isNeg) && res.tags && res.tags.length > 0 
-            ? res.tags 
+          // 解决图二痛点标签与白色标签重复多余显示：
+          // 若为差评/隐性差评，痛点标签存入 extractedGrievances，并在 topics 中剔除相同的痛点标签
+          const rawTags = (res.tags && res.tags.length > 0) ? res.tags : [];
+          const newGrievances = (isHidden || isNeg) 
+            ? rawTags 
             : r.hiddenNegativeCheck.extractedGrievances;
+
+          const distinctTopics = (isHidden || isNeg)
+            ? rawTags.filter(t => !newGrievances.some(g => g.trim().toLowerCase() === t.trim().toLowerCase() || g.includes(t) || t.includes(g)))
+            : rawTags;
 
           return {
             ...r,
             contentZh: cleanTrans || r.contentZh,
             languageLabel: (r.languageLabel === '未知/英文' || !r.languageLabel) ? '未知' : r.languageLabel,
-            topics: newTopics,
+            topics: distinctTopics.length > 0 ? distinctTopics : (isHidden || isNeg ? [] : r.topics),
             customSentimentLabel: res.sentiment,
-            analyzedModel: res.model || 'gpt-5.4-mini',
+            analyzedModel: res.model || 'gemini-3.7-flash',
             hiddenNegativeCheck: {
               ...r.hiddenNegativeCheck,
               isHiddenNegative: isHidden,
@@ -155,55 +162,73 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
             }
           };
         }));
-        setUploadToast(`✅ 评价 #${review.id} AI分析完成 (模型: ${res.model || 'gpt-5.4-mini'})：【译文】、【情感方向: ${res.sentiment}】、【标签: ${res.tags.join('、')}】已全部联动刷新！`);
+        setUploadToast(`✅ 评价 #${review.id} AI分析完成 (模型: ${res.model || 'gemini-3.7-flash'})：【译文】、【情感方向: ${res.sentiment}】、【标签: ${res.tags.join('、')}】已全部联动刷新！`);
         setTimeout(() => setUploadToast(null), 5000);
+      } else if (res && res.isFallback) {
+        // 满足需求(5)：明确在 UI Toast 上提示“AI 连接异常，已使用本地引擎”
+        setUploadToast(`⚠️ 评价 #${review.id} AI 连接异常，已使用本地引擎。`);
+        setTimeout(() => setUploadToast(null), 4000);
       } else {
-        setUploadToast(`⚠️ 评价 #${review.id} 分析请求未成功返回，已维持安全兜底。`);
+        setUploadToast(`⚠️ 评价 #${review.id} AI 连接异常，已使用本地引擎。`);
         setTimeout(() => setUploadToast(null), 4000);
       }
     } catch (e) {
       console.error('Manual reanalyze failed', e);
-      setUploadToast(`❌ 评价 #${review.id} AI分析遇到网络异常，请检查后端状态。`);
+      setUploadToast(`⚠️ 评价 #${review.id} AI 连接异常，已使用本地引擎。`);
       setTimeout(() => setUploadToast(null), 4000);
     } finally {
       setRetranslatingIds(prev => ({ ...prev, [review.id]: false }));
     }
   };
 
-  // 自动后台异步对检测为模板词、未完全配对或泰语/小语种的评论进行 Google Translate 翻译校准升级
+  // 自动后台异步对未完全使用 AI 大模型转译、或包含本地词典粗糙特征的评论直接调用云端 AI 大模型
   useEffect(() => {
     let isMounted = true;
     const upgradeTranslations = async () => {
-      // 找出需要升级翻译的评论（包含可疑的第三方模板词、非中文但缺乏译文、或者包含泰文字符未清洗等）
+      // 找出需要首次直接调用 AI 大模型的评论（非中文留评且未经过大模型分析，或包含低质本地词典模板）
       const candidates = reviews.filter(r => 
-        !r.contentZh ||
-        !/[\u4e00-\u9fa5]/.test(r.contentZh) ||
-        r.contentZh.includes('【买家好评】') ||
-        r.contentZh.includes('规格材质符合预期') ||
-        r.contentZh.includes('【给5星鼓励】') ||
-        /[\u0E00-\u0E7F]/.test(r.contentZh) ||
-        (r.rating <= 3 && (r.contentZh.includes('好评') || r.contentZh.includes('满意') || r.contentZh.includes('质量可靠耐用'))) ||
-        (r.content.includes('สินค้าที่ได้มาสวยค่ะ') && !r.contentZh.includes('切割效果')) ||
-        (r.content.length > 20 && (!r.contentZh || r.contentZh.length < 8))
+        r.language !== 'zh' && (
+          !r.analyzedModel ||
+          r.analyzedModel === 'local-multilingual-engine' ||
+          !r.contentZh ||
+          !/[\u4e00-\u9fa5]/.test(r.contentZh) ||
+          r.contentZh.includes('品质良好很满意') ||
+          r.contentZh.includes('收到商品品质与做工符合预期') ||
+          r.contentZh.includes('卖家店铺') ||
+          r.contentZh.includes('。。。') ||
+          r.contentZh.includes('【买家好评】') ||
+          r.contentZh.includes('规格材质符合预期') ||
+          r.contentZh.includes('【给5星鼓励】') ||
+          /[\u0E00-\u0E7F]/.test(r.contentZh) ||
+          (r.rating <= 3 && (r.contentZh.includes('好评') || r.contentZh.includes('满意') || r.contentZh.includes('质量可靠耐用'))) ||
+          (r.content.length > 20 && (!r.contentZh || r.contentZh.length < 8))
+        )
       ).slice(0, 50);
 
       if (candidates.length === 0) return;
 
-      let changed = false;
-      const updatedMap: Record<string, string> = {};
+      const texts = candidates.map(c => c.content);
+      const translations = await batchTranslateWithAi(texts);
 
-      for (const r of candidates) {
-        try {
-          const fullTrans = await translateWithGoogleApi(r.content, r.language || 'auto');
-          if (fullTrans && fullTrans !== r.contentZh && !containsForbiddenForeignChars(fullTrans)) {
-            updatedMap[r.id] = fullTrans;
-            changed = true;
-          }
-        } catch (e) {}
-      }
+      if (!isMounted) return;
+
+      const updatedMap: Record<string, string> = {};
+      let changed = false;
+
+      candidates.forEach((r, idx) => {
+        const fullTrans = translations[idx];
+        if (fullTrans && fullTrans !== r.contentZh && !containsForbiddenForeignChars(fullTrans)) {
+          updatedMap[r.id] = fullTrans;
+          changed = true;
+        }
+      });
 
       if (changed && isMounted) {
-        setReviews(prev => prev.map(r => updatedMap[r.id] ? { ...r, contentZh: updatedMap[r.id] } : r));
+        setReviews(prev => prev.map(r => updatedMap[r.id] ? {
+          ...r,
+          contentZh: updatedMap[r.id],
+          analyzedModel: r.analyzedModel || 'gemini-3.7-flash'
+        } : r));
       }
     };
 
@@ -348,23 +373,9 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
     return extractExecutiveDashboardData(reviews).reviewTags;
   }, [reviews]);
 
-  // 根据当前顶部综合筛选条件，过滤评论列表
-  const filteredReviews = useMemo(() => {
+  // 全局业务大盘过滤（仅响应星级、变体、情感、全局标签与关键词搜索，不受“清洗分流快速透视”局部透视影响）
+  const globalFilteredReviews = useMemo(() => {
     return reviews.filter(r => {
-      // 0. 清洗分段多选过滤 (支持同时多选多个分类，OR 逻辑组合)
-      if (selectedCleaningSegments.length > 0) {
-        const matchesAny = selectedCleaningSegments.some(seg => {
-          if (seg === 'valid') return !r.invalidCheck.isInvalid;
-          if (seg === 'hidden_negative') return r.hiddenNegativeCheck.isHiddenNegative;
-          if (seg === 'coins') return r.invalidCheck.category === 'text_coins_farming';
-          if (seg === 'default') return r.invalidCheck.category === 'system_default' || r.invalidCheck.category === 'text_template' || r.invalidCheck.category === 'text_irrelevant' || r.content.trim().length === 0;
-          if (seg === 'fake') return r.invalidCheck.category === 'rating_fake_cluster';
-          if (seg === 'low_star') return r.rating <= 3;
-          return false;
-        });
-        if (!matchesAny) return false;
-      }
-
       // 兼容原有 onlyValidFilter
       if (onlyValidFilter && r.invalidCheck.isInvalid) {
         return false;
@@ -413,23 +424,44 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
 
       return true;
     });
-  }, [reviews, selectedCleaningSegments, selectedStar, selectedVariant, selectedSentiment, selectedTagFilter, searchQuery, onlyValidFilter]);
+  }, [reviews, selectedStar, selectedVariant, selectedSentiment, selectedTagFilter, searchQuery, onlyValidFilter]);
 
-  // 核心业务大盘聚合计算 (联动随 filteredReviews 实时计算)
+  // 核心业务大盘聚合计算 (严格保持全局计算稳定，不受下方“清洗分流快速透视”局部透视的影响)
   const dashboardData = useMemo(() => {
-    return extractExecutiveDashboardData(filteredReviews);
-  }, [filteredReviews]);
+    return extractExecutiveDashboardData(globalFilteredReviews);
+  }, [globalFilteredReviews]);
+
+  // 评论证据表格局部过滤（严格满足需求4：清洗分流快速透视只联动评论证据表格，不改变大盘全局）
+  const evidenceTableReviews = useMemo(() => {
+    if (selectedCleaningSegments.length === 0) {
+      return globalFilteredReviews;
+    }
+    return globalFilteredReviews.filter(r => {
+      return selectedCleaningSegments.some(seg => {
+        if (seg === 'valid') return !r.invalidCheck.isInvalid;
+        if (seg === 'hidden_negative') return r.hiddenNegativeCheck.isHiddenNegative;
+        if (seg === 'coins') return r.invalidCheck.category === 'text_coins_farming';
+        if (seg === 'default') return r.invalidCheck.category === 'system_default' || r.invalidCheck.category === 'text_template' || r.invalidCheck.category === 'text_irrelevant' || r.content.trim().length === 0;
+        if (seg === 'fake') return r.invalidCheck.category === 'rating_fake_cluster';
+        if (seg === 'low_star') return r.rating <= 3;
+        return false;
+      });
+    });
+  }, [globalFilteredReviews, selectedCleaningSegments]);
+
+  // 兼容别名供大盘其他通用处引用
+  const filteredReviews = globalFilteredReviews;
 
   // 评论证据表格：根据留评时间排序 (最新 / 最晚)
   const displayReviews = useMemo(() => {
-    const sorted = [...filteredReviews];
+    const sorted = [...evidenceTableReviews];
     sorted.sort((a, b) => {
       const timeA = new Date(a.reviewTime || '').getTime() || 0;
       const timeB = new Date(b.reviewTime || '').getTime() || 0;
       return timeSortOrder === 'desc' ? timeB - timeA : timeA - timeB;
     });
     return sorted;
-  }, [filteredReviews, timeSortOrder]);
+  }, [evidenceTableReviews, timeSortOrder]);
 
   // 重置筛选
   const handleResetFilters = () => {
@@ -1755,12 +1787,12 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
                   <div className="flex items-center gap-3 sm:gap-4 text-[11px] flex-wrap">
                     <span className="flex items-center gap-1.5">
                       <span className="h-3 w-3 rounded-xs bg-[#1E528E] inline-block shadow-xs" />
-                      <span className="font-semibold text-[#090911]">留评总量 (加深柱)</span>
+                      <span className="font-semibold text-[#090911]">留评总量 </span>
                     </span>
                     <span className="flex items-center gap-1.5">
                       <span className="h-1 w-3.5 bg-[#1B58A1] inline-block rounded-full" />
                       <span className="h-2 w-2 rounded-full bg-[#1B58A1] border border-white inline-block" />
-                      <span className="opacity-80">好评率走势 (上半区独立折线)</span>
+                      <span className="opacity-80">好评率</span>
                     </span>
                     <span className="flex items-center gap-1.5">
                       <span className="h-2.5 w-2.5 rounded-full bg-[#E05D52] ring-2 ring-[#FCA5A5] inline-block" />
@@ -2234,7 +2266,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
               <span>评论证据 · 原始数据打标、情感方向与评论拆分</span>
             </h2>
             <p className="text-[11px] opacity-60">
-              当前展示前 100 条 (共 {filteredReviews.length} 条) · 适配桌面同屏呈现，无需横向滚动即可点击【穿透详情】
+              当前展示前 100 条 (分流透视联动共 {evidenceTableReviews.length} 条 / 业务大盘全量 {globalFilteredReviews.length} 条) · 适配桌面同屏呈现，无需横向滚动即可点击【穿透详情】
             </p>
           </div>
           <div className="flex items-center gap-2 text-xs font-mono">
@@ -2499,23 +2531,30 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
                       {/* 6. 匹配标签与痛点 */}
                       <td className="py-3 px-2 align-top">
                         <div className="space-y-1">
-                          {review.topics.length > 0 && (
-                            <div className="flex flex-wrap gap-1">
-                              {review.topics.map((t, idx) => (
-                                <span key={idx} className={`px-1.5 py-0.2 rounded text-[10px] border ${
-                                  isLight ? 'bg-[#F8FAFC] text-[#5A6E85] border-[#91AECF]/30' : 'bg-neutral-800 text-neutral-300 border-neutral-700'
-                                }`}>
-                                  {t}
-                                </span>
-                              ))}
-                            </div>
-                          )}
+                          {/* 过滤掉与痛点重复的白色主题标签，彻底杜绝图二图三中的多余重复 */}
+                          {(() => {
+                            const grievances = review.hiddenNegativeCheck?.extractedGrievances || [];
+                            const distinctTopics = review.topics.filter(t => 
+                              !grievances.some(g => g.trim().toLowerCase() === t.trim().toLowerCase() || g.includes(t) || t.includes(g))
+                            );
+                            return distinctTopics.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {distinctTopics.map((t, idx) => (
+                                  <span key={idx} className={`px-1.5 py-0.2 rounded text-[10px] border ${
+                                    isLight ? 'bg-[#F8FAFC] text-[#5A6E85] border-[#91AECF]/30' : 'bg-neutral-800 text-neutral-300 border-neutral-700'
+                                  }`}>
+                                    {t}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null;
+                          })()}
 
                           {review.hiddenNegativeCheck.extractedGrievances.length > 0 && (
                             <div className="space-y-0.5">
                               {review.hiddenNegativeCheck.extractedGrievances.map((g, idx) => (
                                 <div key={idx} className="text-[10px] text-[#E05D52] bg-[#FFF1F0] px-1 py-0.5 rounded border border-[#FCA5A5] leading-tight">
-                                  痛点: {g}
+                                  {g.replace(/^(痛点|客诉痛点)[:：]\s*/, '')}
                                 </div>
                               ))}
                             </div>
@@ -2663,32 +2702,21 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
             <div className="space-y-2">
               <div className="text-xs font-semibold opacity-80">命中的智能标签与痛点识别</div>
               <div className="flex flex-wrap gap-1.5">
-                {activeDrilldownReview.topics.map((t, i) => (
-                  <span key={i} className={`px-2 py-1 text-xs rounded border ${
-                    isLight ? 'bg-[#F0F6FC] text-[#1B58A1] border-[#BCD7F5]' : 'bg-neutral-800 text-neutral-200 border-neutral-700'
-                  }`}>
-                    主题: {t}
-                  </span>
-                ))}
+                {activeDrilldownReview.topics
+                  .filter(t => !activeDrilldownReview.hiddenNegativeCheck.extractedGrievances.some(g => g.trim().toLowerCase() === t.trim().toLowerCase() || g.includes(t) || t.includes(g)))
+                  .map((t, i) => (
+                    <span key={i} className={`px-2 py-1 text-xs rounded border ${
+                      isLight ? 'bg-[#F0F6FC] text-[#1B58A1] border-[#BCD7F5]' : 'bg-neutral-800 text-neutral-200 border-neutral-700'
+                    }`}>
+                      主题: {t}
+                    </span>
+                  ))}
                 {activeDrilldownReview.hiddenNegativeCheck.extractedGrievances.map((g, i) => (
                   <span key={i} className="px-2 py-1 text-xs rounded bg-[#FFF1F0] text-[#E05D52] border border-[#FCA5A5]">
-                    客诉痛点: {g}
+                    {g.replace(/^(痛点|客诉痛点)[:：]\s*/, '')}
                   </span>
                 ))}
               </div>
-            </div>
-
-            {/* 判定标准依据与运营应对建议 */}
-            <div className={`p-3 rounded-lg border space-y-1.5 text-xs ${
-              isLight ? 'bg-[#F8FAFC] border-[#91AECF]/30 text-[#090911]' : 'bg-neutral-950 border-neutral-800'
-            }`}>
-              <div className={`font-semibold flex items-center gap-1.5 ${isLight ? 'text-[#1B58A1]' : 'text-sky-400'}`}>
-                <ShieldAlert className="h-4 w-4" />
-                <span>算法判定依据与建议策略</span>
-              </div>
-              <p className="opacity-80 leading-relaxed">
-                {activeDrilldownReview.hiddenNegativeCheck.businessImpact}
-              </p>
             </div>
 
             <div className={`flex justify-end pt-2 border-t ${isLight ? 'border-[#91AECF]/30' : 'border-neutral-800'}`}>

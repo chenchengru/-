@@ -244,7 +244,7 @@ export const HiddenNegativeDashboard: React.FC<HiddenNegativeDashboardProps> = (
                   <div className="flex items-start gap-2">
                     <span className="text-[#E05D52] font-semibold shrink-0">提取具体痛点：</span>
                     <span className={`font-medium ${isLight ? 'text-[#C53030]' : 'text-rose-200'}`}>
-                      {review.hiddenNegativeCheck.extractedGrievances.join('；')}
+                      {review.hiddenNegativeCheck.extractedGrievances.map(g => g.replace(/^(痛点|客诉痛点)[:：]\s*/, '')).join('；')}
                     </span>
                   </div>
 

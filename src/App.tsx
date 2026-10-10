@@ -12,7 +12,7 @@ import { SettingsManagement } from './components/SettingsManagement';
 import { PRESET_DATASETS } from './data/mockDatasets';
 import { StandardReview, DatasetSummary } from './types';
 import { analyzeScenarios } from './utils/scenarioAnalyzer';
-import { translateToChinese } from './utils/translator';
+import { translateToChinese, batchTranslateWithAi } from './utils/translator';
 import { detectHiddenNegative, extractTopicsAndKeywords } from './utils/sentimentAndHiddenReview';
 import { identifyBatchFakeClusters } from './utils/reviewCleaner';
 import { 
@@ -119,6 +119,37 @@ export default function App() {
     );
 
     const rehydrated = rehydrateReviews(normalizedReviews);
+
+    // 对非中文且缺乏大模型精准翻译的评论，首次导入直接并发调用 AI 大模型进行高质量翻译
+    const needAiTrans = rehydrated.filter(r => 
+      r.language !== 'zh' && (
+        !r.contentZh || 
+        !/[\u4e00-\u9fa5]/.test(r.contentZh) || 
+        r.contentZh.includes('品质良好很满意') || 
+        r.contentZh.includes('收到商品品质与做工符合预期') ||
+        r.contentZh.includes('卖家店铺') ||
+        r.contentZh.includes('。。。')
+      )
+    );
+
+    if (needAiTrans.length > 0) {
+      try {
+        const topTexts = needAiTrans.slice(0, 30).map(r => r.content);
+        const topTranslations = await batchTranslateWithAi(topTexts);
+        const transMap = new Map<string, string>();
+        needAiTrans.slice(0, 30).forEach((r, i) => {
+          if (topTranslations[i]) transMap.set(r.id, topTranslations[i]);
+        });
+        rehydrated.forEach(r => {
+          if (transMap.has(r.id)) {
+            r.contentZh = transMap.get(r.id)!;
+            r.analyzedModel = 'gemini-3.7-flash';
+          }
+        });
+      } catch (e) {
+        console.warn('Initial AI batch translation skipped:', e);
+      }
+    }
 
     // 计算均星
     const sum = rehydrated.reduce((acc, r) => acc + r.rating, 0);

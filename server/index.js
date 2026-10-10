@@ -7,6 +7,10 @@ dotenv.config();
 // ==========================================
 // 东南亚跨境电商多语言评论 AI 深度分析提示词 (Prompt)
 // ==========================================
+const DEFAULT_RELAY_KEY = 'sk-t095ogHNcj63wueXNbwkTu4otrsnPOysgba28cHLGUfzcLZm';
+const DEFAULT_RELAY_BASE_URL = 'http://dc-aiapi-666.ecxhy.com:33228/v1';
+const DEFAULT_RELAY_MODEL = 'gemini-3.7-flash';
+
 const SEA_REVIEW_SYSTEM_PROMPT = `
 你是一名深耕东南亚跨境电商（Shopee、Lazada）的资深数据分析专家与多语言本土化评审大师。
 你精通泰语 (TH)、越南语 (VI)、印尼/马来语 (ID/MS)、菲律宾他加禄语 (TL/PH)、英文 (EN) 以及中英混合语。
@@ -14,27 +18,47 @@ const SEA_REVIEW_SYSTEM_PROMPT = `
 【核心翻译硬性指令（极高优先级）】：
 1. 不管输入是什么语言（泰语/马来语/越南语/英语/混合语），"translation"（中文译文）字段必须 100% 输出简体中文，严禁保留任何原文单词（除正规英文品牌名、数字、型号外，如 Type-C、500ml）。
 2. 只输出中文译文，不要输出原文，不要中英夹杂，不要解释，直接给译文。
-3. 翻译质量必须极高：严禁生硬死板机翻，要符合中国主流电商（淘宝、京东）买家真实评价与追评的自然表达口吻。
+3. 【商品参数与功能特性忠实转译（极其关键）】：
+   原文不仅包含买家情感，还常常包含大量“商品参数/功能点/规格”（如：快干、防水、防酒精、涂轮胎、修补划痕、遮瑕、陶瓷玻璃适用、9色可选、容量尺寸等）或买家直接复制了产品参数介绍。
+   如果买家复制了产品参数或评价商品功效，需忠实且通顺地翻译其真实功能特性与买家反馈，绝对不得遗漏、省略或用概括性套话替换具体的功能参数描述！
+4. 翻译质量必须极高：严禁生硬死板机翻，要符合中国主流电商（淘宝、京东）买家真实评价与追评的自然表达口吻。
    例如：泰语 "น่าทักน้ํา" / "น่าทักน้ำ" 等口语词要结合上下文意译为通顺流畅的中文（如"外观精致有质感，防水性能好"），绝对不要逐字硬翻！
    泰语 "ตรงปก" 译为 "实物与图片相符（货对版）"，"ส่งเลว" 译为 "送货服务极差/物流体验差"，"5555" 译为 "哈哈/讥讽笑声"。
    印尼语 "b aja" 译为 "中规中矩/平平无奇"，"rusak pas dibuka" 译为 "开箱即发现损坏"。
    越南语 "sp ok nhưng" 译为 "商品外观看着还行但是..."，"cho 5 sao để nhận xu" 译为 "给5星只为领平台金币"。
-4. 真实情感方向（穿透表面星级）：
+5. 真实情感方向（穿透表面星级）：
    - "五星隐性差评"：买家打了 5 星，但正文中存在明确的质量缺陷、退货意向、物流极差、功能失灵等不满；
    - "四星隐性差评"：买家打了 4 星，但正文实为差评扣分与痛点吐槽；
    - "正向满意"：买家真正满意产品质量与使用体验；
    - "严重差评"：1-2 星，存在严重质量缺陷、假货、破损、欺诈等严重不满；
    - "负向不满"：明显的差评或抱怨；
    - "中立观望"：中规中矩，无明显喜恶，或好坏参半。
-5. 标签 tags：包含 1 到 3 个精准具体的痛点或优点标签。
+6. 标签 tags：包含 1 到 3 个精准具体的痛点或优点标签。如果是差评/隐性差评，提炼核心痛点；如果是好评，提炼核心卖点/优点。
 
 【输出格式要求】：
 必须严格只返回一个纯 JSON 对象，不得包含 Markdown 标记或任何多余文字：
 {
-  "translation": "100%纯简体中文译文（严禁遗留原文单词，自然通顺）",
+  "translation": "100%纯简体中文译文（忠实完整包含功能点与参数，严禁遗留原文单词，自然通顺）",
   "sentiment": "五星隐性差评",
   "tags": ["痛点/优点标签1", "痛点/优点标签2"]
 }
+`.trim();
+
+const TRANSLATE_PROMPT_TEMPLATE = (text) => `
+你是一名深耕东南亚跨境电商的专业多语言本土化翻译大师。请将以下买家评论完整翻译为100%纯简体中文。
+【严格要求】：
+1. 只输出中文译文，不要输出原文，不要中英夹杂，不要解释，直接给译文。
+2. 不管输入是什么语言（泰语/马来语/越南语/英语/混合语），必须100%输出简体中文，绝对不能保留任何原文单词（除正规英文品牌名、数字、型号外，如 Type-C、500ml）。
+3. 【商品参数与功能特性忠实转译（极其关键）】：
+   原文不仅包含买家情感，还常常包含大量“商品参数/功能点/规格”（如：快干、防水、防酒精、涂轮胎、修补划痕、遮瑕、陶瓷玻璃适用、9色可选、容量尺寸等）或买家直接复制了产品参数介绍。
+   如果买家复制了产品参数或评价商品功效，需忠实且通顺地翻译其真实功能特性与买家反馈，绝对不得遗漏、省略或用概括性套话替换具体的功能参数描述！
+4. 翻译质量必须极高，符合中文电商买家真实自然表达，拒绝逐字硬翻与生硬机翻味。
+   例如：泰语 "น่าทักน้ํา" / "น่าทักน้ำ" 等口语词要结合上下文意译为通顺流畅的中文（如"外观精致有质感，防水性能好"），绝对不要逐字硬翻！
+   泰语 "ตรงปก" 翻译为 "实物与图片相符（货对版）"，"ส่งเลว" 翻译为 "送货服务极差/物流体验差"，"5555" 翻译为 "哈哈/讥讽笑声"。
+待翻译买家评论原文：
+"""
+${text}
+"""
 `.trim();
 
 // 辅助：从模型返回的字符串中稳健提取 JSON
@@ -70,7 +94,7 @@ function containsForbiddenForeignChars(text) {
   return false;
 }
 
-// 强制纯中文净化引擎
+// 强制纯中文净化引擎（杜绝任何外文字符遗留）
 function purifyToPureChinese(translated, rawOriginal, rating) {
   let result = translated || '';
 
@@ -152,23 +176,13 @@ function purifyToPureChinese(translated, rawOriginal, rating) {
     const star = Number(rating) || 5;
     const lowerRaw = (rawOriginal || '').toLowerCase();
     const isBad = /rusak|hancur|pecah|broken|damage|defect|kecewa|slow|lama|tệ|lởm|พัง|แตก|ส่งช้า|ส่งเลว|ไม่ดี|ชาร์จไม่เข้า|sira/i.test(lowerRaw);
-    const hasBattery = /bat|baterai|pin|charg|ไฟ/i.test(lowerRaw);
-    const hasDelivery = /kirim|antar|kurir|delivery|ship|ขนส่ง|giao/i.test(lowerRaw);
-
-    if (star >= 4 && isBad) {
-      if (hasBattery) {
-        result = '打高星是给店家鼓励，但实际使用中电池续航极短且充电存在异常，做工与宣传有差距，希望改进品质。';
-      } else if (hasDelivery) {
-        result = '商品整体符合预期，但是物流派送服务极差且等待时间过长，包装有所挤压。';
-      } else {
-        result = '表面给出好评，但实物做工存在瑕疵缺陷，整体强度与耐用性不足，使用体验有待提升。';
-      }
-    } else if (star <= 2 || isBad) {
-      result = '商品存在明显质量缺陷或做工粗糙，无法达到正常使用要求，物流配送体验差，非常令人失望。';
+    
+    if (isBad) {
+      result = '买家反馈商品存在破损瑕疵或物流延误，使用体验不佳。';
     } else if (star >= 4) {
-      result = '收到商品品质与做工符合预期，外观精致美观，整体使用体验非常满意，性价比高，物流及时。';
+      result = '买家反馈商品已顺利收到，做工品质符合预期，整体满意。';
     } else {
-      result = '商品已顺利签收，外观包装完好，整体使用体验中规中矩，符合基础价格预期。';
+      result = '买家对商品整体表现评价中规中矩。';
     }
   }
 
@@ -179,53 +193,19 @@ function purifyToPureChinese(translated, rawOriginal, rating) {
   return result;
 }
 
-// 本地高精度东南亚语意与隐性差评备用分析引擎（当没有任何外部 API 时兜底）
+// 本地快速分析（仅用于极端离线断网情况）
 function fallbackAnalyze(content, rating, language) {
   const text = (content || '').trim();
   const star = Number(rating) || 5;
 
-  let translation = '';
+  let translation = purifyToPureChinese('', text, star);
   let sentiment = '中立观望';
   const tags = [];
 
   const hasBattery = /แบต|bat|baterai|pin|battery|charg|ไฟ|sạc/i.test(text);
   const hasDamage = /พัง|แตก|hỏng|vỡ|rusak|patah|broken|defect|crack|rách/i.test(text);
   const hasLogisticsBad = /ส่งเลว|ส่งแย่|ขนส่งแย่|ส่งช้า|kirimnya lama|pengiriman jelek|pengiriman buruk|giao hàng tệ|pangit ang delivery|bad delivery/i.test(text);
-  const hasCeramicOrCar = /เซรามิก|แก้ว|ตกแต่งรถยนต์|keramik|kaca|ceramic|glass/i.test(text);
-  const hasScratchRepair = /รอยขีดขวด|รอยขีดข่วน|จุดรอย|goresan|vết xước|scratch/i.test(text);
   const hasGood = /ดี|สวย|ชอบ|tốt|đẹp|thích|bagus|mantap|good|great|suka|ตรงปก/i.test(text);
-
-  if (/[\u0e00-\u0e7f]/.test(text)) {
-    if (text.includes('เซรามิก') || text.includes('ตกแต่งรถยนต์')) {
-      translation = '适用于陶瓷和玻璃，多种颜色款式可选，适合汽车装饰美化，防水且持久耐用，多功能适用于多种不同材质表面。';
-      if (text.includes('น่าทักน้ํา') || text.includes('น่าทักน้ำ')) {
-        translation += ' 外观精致漂亮且做工很有质感，防水性能好。';
-      }
-    } else if (text.includes('รอยขีดขวด') || text.includes('รอยขีดข่วน') || text.includes('ส่งเลว')) {
-      translation = '使用效果良好非常适用，点涂遮盖划痕瑕疵处，各种划痕斑点修补效果良好，商品与宣传图一致（货对版），但物流配送服务极差。';
-    } else if (text.includes('ให้ 5 ดาวเป็นกำลังใจ')) {
-      translation = '打5星是给店家鼓励，但是电池充不了电，用一会儿就没电了。';
-    } else if (text.includes('แบต')) {
-      translation = '电池性能不佳，掉电极快，与描述有差距。';
-    } else {
-      translation = purifyToPureChinese('', text, star);
-    }
-  } else if (/[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(text)) {
-    if (text.includes('pin')) {
-      translation = '商品外观还行，但是电池掉电很快，充几次就充不进了。';
-    } else if (text.includes('giao hàng tệ')) {
-      translation = '商品符合描述，但是送货物流服务非常糟糕。';
-    } else {
-      translation = purifyToPureChinese('', text, star);
-    }
-  } else {
-    translation = purifyToPureChinese('', text, star);
-  }
-
-  // 严格确保 100% 纯简体中文
-  if (containsForbiddenForeignChars(translation)) {
-    translation = purifyToPureChinese(translation, text, star);
-  }
 
   const hasComplaint = hasBattery || hasDamage || hasLogisticsBad || /ไม่ดี|kém|jelek|bad|slow|tệ|ไม่ตรงปก/i.test(text);
 
@@ -244,13 +224,11 @@ function fallbackAnalyze(content, rating, language) {
   if (hasLogisticsBad) tags.push('送货极差/物流体验差');
   if (hasBattery) tags.push('电池不耐用/充不进电');
   if (hasDamage) tags.push('部件破损/做工瑕疵');
-  if (hasScratchRepair) tags.push('遮瑕修补效果好');
-  if (hasCeramicOrCar) tags.push('适用陶瓷玻璃/汽车');
   if (text.includes('ตรงปก')) tags.push('货对版/与图相符');
   if (tags.length === 0) {
-    if (sentiment === '正向满意') tags.push('使用满意', '性价比高');
-    else if (sentiment.includes('差评')) tags.push('质量或服务需改进');
-    else tags.push('体验中规中矩');
+    if (sentiment === '正向满意') tags.push('符合预期');
+    else if (sentiment.includes('差评')) tags.push('体验不佳');
+    else tags.push('中规中矩');
   }
 
   return {
@@ -260,33 +238,23 @@ function fallbackAnalyze(content, rating, language) {
   };
 }
 
-// 候选优质模型列表（从中转站众多模型中自适应探测可用模型，优先 Gemini 系列极速模型）
 const PREFERRED_RELAY_MODELS = [
   'gemini-3.7-flash',
   'gemini-3.5-flash',
-  'gemini-3.1-flash-lite',
   'gpt-5.4-mini',
-  'gpt-5.4',
-  'claude-sonnet-5',
-  'gpt-5.4-nano',
-  'glm-5.2'
+  'gpt-5.4'
 ];
 
 let cachedWorkingModel = null;
 
-// 从中转站获取可用模型列表或验证活跃模型
 async function resolveWorkingRelayModel(baseUrl, apiKey, requestedModel) {
   if (cachedWorkingModel) {
     return cachedWorkingModel;
   }
-
-  // 1. 如果用户明确指定了模型，首先使用指定的模型
   if (requestedModel && requestedModel.trim()) {
     cachedWorkingModel = requestedModel.trim();
     return cachedWorkingModel;
   }
-
-  // 2. 尝试从中转站拉取 /models 列表
   try {
     const listRes = await fetch(`${baseUrl.replace(/\/+$/, '')}/models`, {
       headers: { 'Authorization': `Bearer ${apiKey}` },
@@ -296,36 +264,197 @@ async function resolveWorkingRelayModel(baseUrl, apiKey, requestedModel) {
       const data = await listRes.json();
       const modelIds = (data.data || []).map(m => m.id);
       if (modelIds.length > 0) {
-        // 在中转站支持的模型中，优先挑选最匹配的候选模型 (Gemini 优先)
         for (const candidate of PREFERRED_RELAY_MODELS) {
           if (modelIds.includes(candidate)) {
             cachedWorkingModel = candidate;
-            console.log(`[Relay Station] Auto-selected optimal Gemini/preferred model: ${candidate}`);
             return candidate;
           }
         }
-        // 如果候选都不在，优先选包含 gemini 的模型，再选其他
         const found = modelIds.find(m => /gemini/i.test(m)) || modelIds.find(m => /gpt|claude/i.test(m)) || modelIds[0];
         if (found) {
           cachedWorkingModel = found;
-          console.log(`[Relay Station] Fallback to available model: ${found}`);
           return found;
         }
       }
     }
-  } catch (e) {
-    console.warn('[Relay Station] Failed to query /models:', e.message);
-  }
+  } catch (e) {}
 
-  // 默认使用测试通过的极速多语言模型 gemini-3.5-flash
-  cachedWorkingModel = 'gemini-3.5-flash';
+  cachedWorkingModel = DEFAULT_RELAY_MODEL;
   return cachedWorkingModel;
 }
 
-// 模块级服务可用性标志
-let isGeminiAvailable = true;
+// 核心云端大模型翻译逻辑
+async function callLlmForTranslation(text) {
+  const cleanText = text.trim();
+  const relayBaseUrl = (
+    process.env.OPENAI_BASE_URL ||
+    DEFAULT_RELAY_BASE_URL
+  ).replace(/\/+$/, '');
 
-// 核心大模型调用逻辑 (优先读取 GEMINI_API_KEY，次选中转站，最后兜底本地 NLP)
+  const relayApiKey = (
+    process.env.OPENAI_API_KEY ||
+    DEFAULT_RELAY_KEY
+  ).trim();
+
+  const userSpecifiedModel = (process.env.OPENAI_MODEL || DEFAULT_RELAY_MODEL).trim();
+
+  if (relayApiKey) {
+    const targetModel = await resolveWorkingRelayModel(relayBaseUrl, relayApiKey, userSpecifiedModel);
+    const endpoint = `${relayBaseUrl}/chat/completions`;
+    const modelsToTry = [targetModel, ...PREFERRED_RELAY_MODELS.filter(m => m !== targetModel)];
+
+    for (const modelCandidate of modelsToTry.slice(0, 3)) {
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${relayApiKey}`
+          },
+          body: JSON.stringify({
+            model: modelCandidate,
+            messages: [
+              { role: 'user', content: TRANSLATE_PROMPT_TEMPLATE(cleanText) }
+            ],
+            temperature: 0.1,
+            max_tokens: 450
+          }),
+          signal: AbortSignal.timeout(10000)
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          let translation = data?.choices?.[0]?.message?.content?.trim();
+          if (translation) {
+            if (containsForbiddenForeignChars(translation)) {
+              translation = purifyToPureChinese(translation, cleanText);
+            }
+            if (!containsForbiddenForeignChars(translation)) {
+              return {
+                success: true,
+                provider: 'relay_api',
+                model: modelCandidate,
+                translation
+              };
+            }
+          }
+        }
+      } catch (e) {
+        console.warn(`[Server Translate] Model ${modelCandidate} failed:`, e.message);
+      }
+    }
+  }
+
+  // 离线兜底
+  return {
+    success: true,
+    isFallback: true,
+    provider: 'local_pure_engine',
+    translation: purifyToPureChinese('', cleanText)
+  };
+}
+
+// 批量云端大模型翻译逻辑 (供初次导入和全量校准极速调用)
+const BATCH_TRANSLATE_PROMPT = (items) => `
+你是一名深耕东南亚跨境电商的专业多语言本土化翻译大师。请将以下数组中的各条买家评论分别完整翻译为100%纯简体中文。
+【严格要求】：
+1. 每一条必须 100% 输出纯简体中文，严禁中外夹杂，严禁保留泰语、印尼语、越南语、英语等原文单词（除正规英文品牌名、数字、型号外）。
+2. 【商品参数与功能特性忠实转译】：忠实且通顺地保留买家评论中所有的商品功能特性与参数细节（如快干、防水、防酒精、涂轮胎、修补划痕、9色可选、尺寸材质等）。
+3. 必须严格只返回一个纯 JSON 数组，数组长度与输入的条数严格一一对应，不得包含 Markdown 标记或多余文字：
+["译文1", "译文2", ...]
+待翻译买家评论列表：
+${JSON.stringify(items)}
+`.trim();
+
+async function callLlmForBatchTranslation(texts) {
+  const validTexts = texts.map(t => String(t || '').trim()).filter(Boolean);
+  if (validTexts.length === 0) {
+    return { success: false, error: 'texts 不能为空' };
+  }
+
+  const relayBaseUrl = (
+    process.env.OPENAI_BASE_URL ||
+    DEFAULT_RELAY_BASE_URL
+  ).replace(/\/+$/, '');
+
+  const relayApiKey = (
+    process.env.OPENAI_API_KEY ||
+    DEFAULT_RELAY_KEY
+  ).trim();
+
+  const userSpecifiedModel = (process.env.OPENAI_MODEL || DEFAULT_RELAY_MODEL).trim();
+
+  if (relayApiKey) {
+    const targetModel = await resolveWorkingRelayModel(relayBaseUrl, relayApiKey, userSpecifiedModel);
+    try {
+      const response = await fetch(`${relayBaseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${relayApiKey}`
+        },
+        body: JSON.stringify({
+          model: targetModel,
+          messages: [
+            { role: 'user', content: BATCH_TRANSLATE_PROMPT(validTexts) }
+          ],
+          temperature: 0.1,
+          max_tokens: 1500
+        }),
+        signal: AbortSignal.timeout(15000)
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        let rawContent = data?.choices?.[0]?.message?.content?.trim() || '';
+        if (rawContent.startsWith('```json')) {
+          rawContent = rawContent.replace(/^```json\s*/i, '').replace(/\s*```$/, '');
+        } else if (rawContent.startsWith('```')) {
+          rawContent = rawContent.replace(/^```\s*/, '').replace(/\s*```$/, '');
+        }
+        let parsedArr = null;
+        try { parsedArr = JSON.parse(rawContent); } catch (e) {
+          const arrMatch = rawContent.match(/\[[\s\S]*\]/);
+          if (arrMatch) {
+            try { parsedArr = JSON.parse(arrMatch[0]); } catch (err) {}
+          }
+        }
+
+        if (Array.isArray(parsedArr) && parsedArr.length > 0) {
+          const translations = validTexts.map((original, i) => {
+            let t = parsedArr[i];
+            if (typeof t === 'string' && t.trim()) {
+              t = t.trim();
+              if (containsForbiddenForeignChars(t)) {
+                t = purifyToPureChinese(t, original);
+              }
+              return t;
+            }
+            return purifyToPureChinese('', original);
+          });
+
+          return {
+            success: true,
+            provider: 'relay_api',
+            model: targetModel,
+            translations
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('[Server Batch Translate] Relay call failed:', e.message);
+    }
+  }
+
+  return {
+    success: true,
+    isFallback: true,
+    provider: 'local_pure_engine',
+    translations: validTexts.map(t => purifyToPureChinese('', t))
+  };
+}
+
+// 核心大模型分析逻辑 (优先调用中转站 gemini-3.7-flash)
 async function callLlmForReviewAnalysis(content, rating, sku, language) {
   const userContent = `
 买家表面评分: ${rating || 5} ★
@@ -337,95 +466,25 @@ ${content}
 """
 `.trim();
 
-  // 1. 首选：Google Gemini 原生 API (GEMINI_API_KEY - gemini-3.8-flash)
-  const geminiApiKey = (process.env.GEMINI_API_KEY || process.env.geminiapikey || '').trim();
-  if (geminiApiKey && isGeminiAvailable) {
-    try {
-      const { GoogleGenAI } = await import('@google/genai');
-      const ai = new GoogleGenAI({
-        apiKey: geminiApiKey,
-        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
-      });
-      const resp = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: `${SEA_REVIEW_SYSTEM_PROMPT}\n\n${userContent}` }]
-          }
-        ],
-        config: {
-          responseMimeType: 'application/json'
-        }
-      });
-
-      const text = resp.text;
-      const parsed = extractJsonFromText(text);
-      if (parsed && parsed.translation && parsed.sentiment) {
-        let trans = parsed.translation;
-        if (containsForbiddenForeignChars(trans)) {
-          try {
-            const retryResp = await ai.models.generateContent({
-              model: 'gemini-3.8-flash',
-              contents: [{
-                role: 'user',
-                parts: [{ text: `请将以下买家评论直接翻译为100%纯简体中文。只输出中文译文，不要输出原文，不要中英夹杂，不要解释，直接给译文：\n"""\n${content}\n"""` }]
-              }]
-            });
-            const retryText = retryResp?.text?.trim();
-            if (retryText && !containsForbiddenForeignChars(retryText)) {
-              trans = retryText;
-            } else {
-              trans = purifyToPureChinese(trans, content, rating);
-            }
-          } catch (reErr) {
-            trans = purifyToPureChinese(trans, content, rating);
-          }
-        }
-
-        return {
-          success: true,
-          provider: 'gemini',
-          model: 'gemini-3.8-flash',
-          translation: trans,
-          sentiment: parsed.sentiment,
-          tags: Array.isArray(parsed.tags) ? parsed.tags.slice(0, 3) : ['深度痛点提炼']
-        };
-      }
-    } catch (_geminiErr) {
-      // 若当前环境密钥受限（如 403 权限），静默标记并平滑切换至中转站
-      isGeminiAvailable = false;
-    }
-  }
-
-  // 2. 次选：支持第三方中转站大模型 API (OPENAI_API_KEY)
   const relayBaseUrl = (
     process.env.OPENAI_BASE_URL ||
-    process.env.API_BASE_URL ||
-    process.env.BASE_URL ||
-    process.env.ZZ_OPENAI_BASE_URL ||
-    'http://dc-aiapi-666.ecxhy.com:33228/v1'
+    DEFAULT_RELAY_BASE_URL
   ).replace(/\/+$/, '');
 
   const relayApiKey = (
     process.env.OPENAI_API_KEY ||
-    process.env.API_KEY ||
-    process.env.LLM_API_KEY ||
-    ''
+    DEFAULT_RELAY_KEY
   ).trim();
 
-  const userSpecifiedModel = (process.env.OPENAI_MODEL || process.env.MODEL_NAME || '').trim();
+  const userSpecifiedModel = (process.env.OPENAI_MODEL || DEFAULT_RELAY_MODEL).trim();
 
   if (relayApiKey) {
     const targetModel = await resolveWorkingRelayModel(relayBaseUrl, relayApiKey, userSpecifiedModel);
     const endpoint = `${relayBaseUrl}/chat/completions`;
-
-    // 尝试调用，支持在失败时自动顺延下一个模型
     const modelsToTry = [targetModel, ...PREFERRED_RELAY_MODELS.filter(m => m !== targetModel)];
 
     for (const modelCandidate of modelsToTry.slice(0, 3)) {
       try {
-        console.log(`[Backend /api/analyze] Calling relay API with model: ${modelCandidate}...`);
         const response = await fetch(endpoint, {
           method: 'POST',
           headers: {
@@ -439,10 +498,10 @@ ${content}
               { role: 'user', content: userContent }
             ],
             temperature: 0.1,
-            max_tokens: 350,
+            max_tokens: 450,
             response_format: { type: 'json_object' }
           }),
-          signal: AbortSignal.timeout(15000)
+          signal: AbortSignal.timeout(12000)
         });
 
         if (response.ok) {
@@ -450,42 +509,9 @@ ${content}
           const contentStr = data?.choices?.[0]?.message?.content;
           const parsed = extractJsonFromText(contentStr);
           if (parsed && parsed.translation && parsed.sentiment) {
-            let trans = parsed.translation;
+            let trans = parsed.translation.trim();
             if (containsForbiddenForeignChars(trans)) {
-              try {
-                const retryRes = await fetch(endpoint, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${relayApiKey}`
-                  },
-                  body: JSON.stringify({
-                    model: modelCandidate,
-                    messages: [
-                      {
-                        role: 'user',
-                        content: `请将以下买家评论直接翻译为100%纯简体中文。只输出中文译文，不要输出原文，不要中英夹杂，不要解释，直接给译文。严禁保留任何泰文、越文、印尼文、英文单词（除品牌名、数字、型号外）：\n"""\n${content}\n"""`
-                      }
-                    ],
-                    temperature: 0.1,
-                    max_tokens: 300
-                  }),
-                  signal: AbortSignal.timeout(8000)
-                });
-                if (retryRes.ok) {
-                  const retryData = await retryRes.json();
-                  const retryText = retryData?.choices?.[0]?.message?.content?.trim();
-                  if (retryText && !containsForbiddenForeignChars(retryText)) {
-                    trans = retryText;
-                  } else {
-                    trans = purifyToPureChinese(trans, content, rating);
-                  }
-                } else {
-                  trans = purifyToPureChinese(trans, content, rating);
-                }
-              } catch (reErr) {
-                trans = purifyToPureChinese(trans, content, rating);
-              }
+              trans = purifyToPureChinese(trans, content, rating);
             }
 
             cachedWorkingModel = modelCandidate;
@@ -498,13 +524,6 @@ ${content}
               tags: Array.isArray(parsed.tags) ? parsed.tags.slice(0, 3) : ['深度痛点提炼']
             };
           }
-        } else {
-          const errStatus = response.status;
-          const errBody = await response.text();
-          console.warn(`[Relay API] Model ${modelCandidate} failed (${errStatus}):`, errBody.slice(0, 150));
-          if (errStatus === 503 || errStatus === 404 || errBody.includes('model_not_found')) {
-            continue;
-          }
         }
       } catch (err) {
         console.warn(`[Relay API] Call ${modelCandidate} error:`, err.message);
@@ -512,10 +531,11 @@ ${content}
     }
   }
 
-  // 3. 兜底回退：本地高精度 NLP 引擎
+  // 兜底回退：若中转站不可达，明确标明 isFallback
   const fb = fallbackAnalyze(content, rating, language);
   return {
     success: true,
+    isFallback: true,
     provider: 'local_nlp_fallback',
     model: 'local-multilingual-engine',
     translation: fb.translation,
@@ -529,11 +549,10 @@ export function registerApiRoutes(app) {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-  // 健康与模型状态检查接口
   app.get('/api/health', async (req, res) => {
-    const relayBaseUrl = process.env.OPENAI_BASE_URL || process.env.API_BASE_URL || 'http://dc-aiapi-666.ecxhy.com:33228/v1';
-    const hasKey = !!(process.env.OPENAI_API_KEY || process.env.API_KEY || process.env.LLM_API_KEY);
-    const activeModel = cachedWorkingModel || (process.env.OPENAI_MODEL || 'gemini-3.5-flash');
+    const relayBaseUrl = process.env.OPENAI_BASE_URL || DEFAULT_RELAY_BASE_URL;
+    const hasKey = !!(process.env.OPENAI_API_KEY || DEFAULT_RELAY_KEY);
+    const activeModel = cachedWorkingModel || (process.env.OPENAI_MODEL || DEFAULT_RELAY_MODEL);
 
     res.json({
       status: 'ok',
@@ -547,14 +566,9 @@ export function registerApiRoutes(app) {
     });
   });
 
-  // 中转站模型列表查询
   app.get('/api/models', async (req, res) => {
-    const relayBaseUrl = (process.env.OPENAI_BASE_URL || 'http://dc-aiapi-666.ecxhy.com:33228/v1').replace(/\/+$/, '');
-    const apiKey = (process.env.OPENAI_API_KEY || process.env.API_KEY || '').trim();
-
-    if (!apiKey) {
-      return res.json({ success: false, message: '未配置中转站 API Key' });
-    }
+    const relayBaseUrl = (process.env.OPENAI_BASE_URL || DEFAULT_RELAY_BASE_URL).replace(/\/+$/, '');
+    const apiKey = (process.env.OPENAI_API_KEY || DEFAULT_RELAY_KEY).trim();
 
     try {
       const resp = await fetch(`${relayBaseUrl}/models`, {
@@ -564,7 +578,7 @@ export function registerApiRoutes(app) {
       if (resp.ok) {
         const data = await resp.json();
         const models = (data.data || []).map(m => m.id);
-        return res.json({ success: true, count: models.length, models, activeModel: cachedWorkingModel || 'gpt-5.4-mini' });
+        return res.json({ success: true, count: models.length, models, activeModel: cachedWorkingModel || DEFAULT_RELAY_MODEL });
       }
       return res.status(resp.status).json({ success: false, message: '中转站拉取模型失败' });
     } catch (e) {
@@ -590,30 +604,44 @@ export function registerApiRoutes(app) {
       console.error('[API /api/analyze Error]', err);
       res.status(500).json({
         success: false,
+        isFallback: true,
         error: err.message || '内部分析服务异常'
       });
     }
   });
 
-  // 纯文本翻译接口 (100% 保证纯简体中文)
+  // 纯文本翻译接口 (直接全部调用中转站大模型额度，支持批量与单条，100% 保证纯简体中文)
   app.post('/api/translate', async (req, res) => {
     try {
-      const { text } = req.body || {};
-      if (!text || typeof text !== 'string') {
-        return res.status(400).json({ success: false, error: 'text 不能为空' });
+      const { text, texts } = req.body || {};
+      if (Array.isArray(texts) && texts.length > 0) {
+        const result = await callLlmForBatchTranslation(texts);
+        return res.json(result);
       }
-      const fb = fallbackAnalyze(text, 5, 'auto');
-      const trans = purifyToPureChinese(fb.translation, text, 5);
-      return res.json({ success: true, translation: trans });
+      if (!text || typeof text !== 'string' || !text.trim()) {
+        return res.status(400).json({ success: false, error: 'text 或 texts 不能为空' });
+      }
+      const result = await callLlmForTranslation(text);
+      return res.json(result);
     } catch (e) {
-      return res.json({ success: true, translation: purifyToPureChinese('', req.body?.text || '', 5) });
+      if (Array.isArray(req.body?.texts)) {
+        return res.json({
+          success: true,
+          isFallback: true,
+          translations: (req.body.texts || []).map(t => purifyToPureChinese('', t))
+        });
+      }
+      return res.json({
+        success: true,
+        isFallback: true,
+        translation: purifyToPureChinese('', req.body?.text || '', 5)
+      });
     }
   });
 
   console.log('✅ Express backend API routes (/api/analyze, /api/translate, /api/health, /api/models) successfully mounted');
 }
 
-// 独立启动支持 (当直接执行 node server/index.js 时)
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 if (isMain) {
   const app = express();

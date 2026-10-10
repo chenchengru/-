@@ -722,8 +722,8 @@ export function purifyToPureChinese(
 }
 
 /**
- * 异步调用翻译辅助（本地词典优先保障，网络连通时支持 API）
- * 100% 确保返回纯简体中文，严禁返回原文或中外夹杂
+ * 异步调用云端大模型翻译服务（直接调用中转站大模型额度，100% 纯简体中文）
+ * 不再使用本地词典拦截，全面由云端大模型保障高质量意译与商品参数忠实转译
  */
 export async function translateWithGoogleApi(
   text: string,
@@ -755,14 +755,7 @@ export async function translateWithGoogleApi(
     } catch (e) {}
   }
 
-  // 2. 本地高精度东南亚全品类词典优先转译 (保证 100% 纯中文)
-  const localTranslation = translateToChinese(cleanText, undefined, forceRefresh);
-  if (localTranslation && !containsForbiddenForeignChars(localTranslation)) {
-    memoryTranslationCache.set(cacheKey, localTranslation);
-    return localTranslation;
-  }
-
-  // 3. 请求 /api/translate
+  // 2. 直接全部调用云端 AI 大模型 /api/translate 接口（使用中转站模型额度）
   try {
     const res = await fetch('/api/translate', {
       method: 'POST',
@@ -784,8 +777,100 @@ export async function translateWithGoogleApi(
       }
     }
   } catch (err) {
-    // ignore
+    console.warn('[translateWithGoogleApi] Cloud AI translation call failed, falling back:', err);
   }
 
+  // 3. 仅当网络真正断开或接口异常时，才使用本地词典做应急兜底
+  const localTranslation = translateToChinese(cleanText, undefined, forceRefresh);
   return localTranslation || purifyToPureChinese('', cleanText);
 }
+
+/**
+ * 批量调用云端 AI 大模型进行多语言评论极速翻译
+ * 供初次数据导入或切换数据源时一次性调用，彻底消除低质本地词典与假好评模板
+ */
+export async function batchTranslateWithAi(texts: string[]): Promise<string[]> {
+  if (!texts || texts.length === 0) return [];
+
+  const results: string[] = new Array(texts.length).fill('');
+  const missingIndices: number[] = [];
+  const missingTexts: string[] = [];
+
+  texts.forEach((txt, idx) => {
+    const clean = String(txt || '').trim();
+    if (!clean) {
+      results[idx] = '';
+      return;
+    }
+    const hash = getTranslationHash(clean);
+    if (memoryTranslationCache.has(hash)) {
+      results[idx] = memoryTranslationCache.get(hash)!;
+      return;
+    }
+    try {
+      const local = localStorage.getItem(`gt_${hash}`);
+      if (local && /[\u4e00-\u9fa5]/.test(local) && !containsForbiddenForeignChars(local)) {
+        memoryTranslationCache.set(hash, local);
+        results[idx] = local;
+        return;
+      }
+    } catch (e) {}
+
+    missingIndices.push(idx);
+    missingTexts.push(clean);
+  });
+
+  if (missingTexts.length === 0) {
+    return results;
+  }
+
+  // 分块批量调用 AI 大模型（每块 15 条，避免单次超长且并发速度极快）
+  const CHUNK_SIZE = 15;
+  for (let i = 0; i < missingTexts.length; i += CHUNK_SIZE) {
+    const chunkTexts = missingTexts.slice(i, i + CHUNK_SIZE);
+    const chunkIndices = missingIndices.slice(i, i + CHUNK_SIZE);
+
+    try {
+      const res = await fetch('/api/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ texts: chunkTexts })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.translations) && data.translations.length === chunkTexts.length) {
+          data.translations.forEach((trans: string, k: number) => {
+            const original = chunkTexts[k];
+            const origIdx = chunkIndices[k];
+            let cleanZh = (trans || '').trim();
+            if (containsForbiddenForeignChars(cleanZh)) {
+              cleanZh = purifyToPureChinese(cleanZh, original);
+            }
+            if (/[\u4e00-\u9fa5]/.test(cleanZh)) {
+              const hash = getTranslationHash(original);
+              memoryTranslationCache.set(hash, cleanZh);
+              try { localStorage.setItem(`gt_${hash}`, cleanZh); } catch (e) {}
+              results[origIdx] = cleanZh;
+            } else {
+              results[origIdx] = purifyToPureChinese('', original);
+            }
+          });
+          continue;
+        }
+      }
+    } catch (err) {
+      console.warn('[batchTranslateWithAi] Batch call error:', err);
+    }
+
+    // 失败离线兜底
+    chunkTexts.forEach((original, k) => {
+      const origIdx = chunkIndices[k];
+      results[origIdx] = purifyToPureChinese('', original);
+    });
+  }
+
+  return results;
+}
+
+
